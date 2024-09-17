@@ -4,11 +4,21 @@ from valkey import ResponseError
 from valkey_test_case import ValkeyTestCase, ValkeyServerVersion
 import logging
 import os
+from valkeytests.conftest import resource_port_tracker
 
 class TestBloomBasic(ValkeyTestCase):
 
     def get_custom_args(self):
-        self.set_server_version(ValkeyServerVersion.LATEST)
+        print(os.environ['VERSION'])
+        if (os.environ['VERSION'] == 'LATEST'):
+            version = ValkeyServerVersion.LATEST
+        elif (os.environ['VERSION'] == '7.2.6'):
+            version = ValkeyServerVersion.V7_2_6
+        elif (os.environ['VERSION'] == '7.2.5'):
+            version = ValkeyServerVersion.V7_2_5
+        else:
+            version = ValkeyServerVersion.LATEST
+        self.set_server_version(version)
         return {
             'loadmodule': os.getenv('MODULE_PATH'),
         }

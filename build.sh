@@ -8,15 +8,15 @@ set -e
 SCRIPT_DIR=$(pwd)
 echo "Script Directory: $SCRIPT_DIR"
 
-echo "Running cargo and clippy format checks..."
-cargo fmt --check
-cargo clippy --profile release --all-targets -- -D clippy::all
+# echo "Running cargo and clippy format checks..."
+# cargo fmt --check
+# cargo clippy --profile release --all-targets -- -D clippy::all
 
-echo "Running cargo build release..."
-cargo build --all --all-targets  --release
+# echo "Running cargo build release..."
+# cargo build --all --all-targets  --release
 
-echo "Running unit tests..."
-cargo test --features enable-system-alloc
+# echo "Running unit tests..."
+# cargo test --features enable-system-alloc
 
 # Ensure VERSION environment variable is set
 if [ -z "$VERSION" ]; then

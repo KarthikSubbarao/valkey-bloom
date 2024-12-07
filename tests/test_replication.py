@@ -25,11 +25,10 @@ class TestBloomReplication(ReplicationTestCase):
 
     def test_replication_behavior(self):
         self.setup_replication(num_replicas=1)
-        is_random_seed = self.client.execute_command('CONFIG GET bf.bloom-use-random-seed')
         # Test replication for write commands.
         bloom_write_cmds = [
-            ('BF.ADD', 'BF.ADD key item', 'BF.ADD key item1', 2),
-            ('BF.MADD', 'BF.MADD key item', 'BF.MADD key item1', 2),
+            ('BF.ADD', 'BF.ADD key item', 'BF.ADD key item1', 1),
+            ('BF.MADD', 'BF.MADD key item', 'BF.MADD key item1', 1),
             ('BF.RESERVE', 'BF.RESERVE key 0.001 100000', 'BF.ADD key item1', 1),
             ('BF.INSERT', 'BF.INSERT key items item', 'BF.INSERT key items item1', 2),
         ]
@@ -37,10 +36,15 @@ class TestBloomReplication(ReplicationTestCase):
             prefix = test_case[0]
             create_cmd = test_case[1]
             # New bloom object being created is replicated.
+            # Validate that the bloom object creation command replicated as BF.INSERT.
             self.client.execute_command(create_cmd)
             assert self.client.execute_command('EXISTS key') == 1
             self.waitForReplicaToSyncUp(self.replicas[0])
             assert self.replicas[0].client.execute_command('EXISTS key') == 1
+            primary_cmd_stats = self.client.info("Commandstats")['cmdstat_' + prefix]
+            assert primary_cmd_stats["calls"] == 1
+            replica_insert_cmd_stats = self.replicas[0].client.info("Commandstats")['cmdstat_BF.INSERT']
+            assert replica_insert_cmd_stats["calls"] == 1
 
             # New item added to an existing bloom is replicated.
             item_add_cmd = test_case[2]
@@ -48,24 +52,39 @@ class TestBloomReplication(ReplicationTestCase):
             assert self.client.execute_command('BF.EXISTS key item1') == 1
             self.waitForReplicaToSyncUp(self.replicas[0])
             assert self.replicas[0].client.execute_command('BF.EXISTS key item1') == 1
-
-            # Validate that the bloom object creation command and item add command was replicated.
-            expected_calls = test_case[3]
-            primary_cmd_stats = self.client.info("Commandstats")['cmdstat_' + prefix]
-            replica_cmd_stats = self.replicas[0].client.info("Commandstats")['cmdstat_' + prefix]
-            assert primary_cmd_stats["calls"] == expected_calls and replica_cmd_stats["calls"] == expected_calls
+            # Validate that item addition (not bloom creation) is using the original command
+            if prefix != 'BF.RESERVE':
+                primary_cmd_stats = self.client.info("Commandstats")['cmdstat_' + prefix]
+                assert primary_cmd_stats["calls"] == 2
+                expected_calls = test_case[3]
+                replica_cmd_stats = self.replicas[0].client.info("Commandstats")['cmdstat_' + prefix]
+                assert replica_cmd_stats["calls"] == expected_calls
+            else:
+                primary_cmd_stats = self.client.info("Commandstats")
+                replica_cmd_stats = self.replicas[0].client.info("Commandstats")
+                assert primary_cmd_stats['cmdstat_BF.RESERVE']["calls"] == 1 and primary_cmd_stats['cmdstat_BF.ADD']["calls"] == 1
+                # In case of the BF.RESERVE test case, we use BF.ADD to add items. Validate this is replicated.
+                assert replica_cmd_stats['cmdstat_BF.ADD']["calls"] == 1 and replica_cmd_stats['cmdstat_BF.INSERT']["calls"] == 1
 
             # Attempting to add an existing item to an existing bloom will NOT replicated.
             self.client.execute_command(item_add_cmd)
             self.waitForReplicaToSyncUp(self.replicas[0])
             primary_cmd_stats = self.client.info("Commandstats")
             replica_cmd_stats = self.replicas[0].client.info("Commandstats")
-            if prefix == 'BF.RESERVE':
-                assert primary_cmd_stats['cmdstat_' + prefix]["calls"] == 1 and replica_cmd_stats['cmdstat_' + prefix]["calls"] == 1
-                assert primary_cmd_stats['cmdstat_BF.ADD']["calls"] == 2 and replica_cmd_stats['cmdstat_BF.ADD']["calls"] == 1
+            if prefix != 'BF.RESERVE':
+                primary_cmd_stats = self.client.info("Commandstats")['cmdstat_' + prefix]
+                assert primary_cmd_stats["calls"] == 3
+                expected_calls = test_case[3]
+                replica_cmd_stats = self.replicas[0].client.info("Commandstats")['cmdstat_' + prefix]
+                assert replica_cmd_stats["calls"] == expected_calls
             else:
-                assert primary_cmd_stats['cmdstat_' + prefix]["calls"] == (expected_calls + 1) and replica_cmd_stats['cmdstat_' + prefix]["calls"] == expected_calls
-            
+                primary_cmd_stats = self.client.info("Commandstats")
+                replica_cmd_stats = self.replicas[0].client.info("Commandstats")
+                assert primary_cmd_stats['cmdstat_BF.RESERVE']["calls"] == 1 and primary_cmd_stats['cmdstat_BF.ADD']["calls"] == 2
+                # In case of the BF.RESERVE test case, we use BF.ADD to add items. Validate this is not replicated since
+                # the item already exists.
+                assert replica_cmd_stats['cmdstat_BF.ADD']["calls"] == 1 and replica_cmd_stats['cmdstat_BF.INSERT']["calls"] == 1
+
             # cmd debug digest
             server_digest_primary = self.client.debug_digest()
             assert server_digest_primary != None or 0000000000000000000000000000000000000000
@@ -73,12 +92,7 @@ class TestBloomReplication(ReplicationTestCase):
             assert server_digest_primary == server_digest_replica
             object_digest_primary = self.client.execute_command('DEBUG DIGEST-VALUE key')
             debug_digest_replica = self.replicas[0].client.execute_command('DEBUG DIGEST-VALUE key')
-            # TODO: Update the test here to validate that digest always matches during replication. Once we implement
-            # deterministic replication (including replicating seeds), this assert will be updated.
-            if is_random_seed[1] == b'yes':
-                assert object_digest_primary != debug_digest_replica
-            else:
-                assert object_digest_primary == debug_digest_replica
+            assert object_digest_primary == debug_digest_replica
 
             self.client.execute_command('FLUSHALL')
             self.waitForReplicaToSyncUp(self.replicas[0])
@@ -139,3 +153,31 @@ class TestBloomReplication(ReplicationTestCase):
             assert primary_cmd_stats["calls"] == 1
             assert primary_cmd_stats["failed_calls"] == 1
             assert ('cmdstat_' + prefix) not in self.replicas[0].client.info("Commandstats")
+
+    # TODO: Review all tests through package and identify any flaky test/code and deflake it.
+    def test_deterministic_replication(self):
+        self.setup_replication(num_replicas=1)
+        # Set non default global properties (config) on the primary node. Any bloom creation on the primary should be
+        # replicated with the properties below.
+        assert self.client.execute_command('CONFIG SET bf.bloom-capacity 1000') == b'OK'
+        assert self.client.execute_command('CONFIG SET bf.bloom-expansion 3') == b'OK'
+        # Test bloom object creation with every command type.
+        bloom_write_cmds = [
+            ('BF.ADD', 'BF.ADD key item'),
+            ('BF.MADD', 'BF.MADD key item'),
+            ('BF.RESERVE', 'BF.RESERVE key 0.001 100000'),
+            ('BF.INSERT', 'BF.INSERT key items item'),
+        ]
+        for test_case in bloom_write_cmds:
+            prefix = test_case[0]
+            create_cmd = test_case[1]
+            self.client.execute_command(create_cmd)
+            server_digest_primary = self.client.debug_digest()
+            assert server_digest_primary != None or 0000000000000000000000000000000000000000
+            server_digest_replica = self.client.debug_digest()
+            object_digest_primary = self.client.execute_command('DEBUG DIGEST-VALUE key')
+            debug_digest_replica = self.replicas[0].client.execute_command('DEBUG DIGEST-VALUE key')
+            assert server_digest_primary == server_digest_replica
+            assert object_digest_primary == debug_digest_replica
+            self.client.execute_command('FLUSHALL')
+            self.waitForReplicaToSyncUp(self.replicas[0])

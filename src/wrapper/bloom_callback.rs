@@ -234,14 +234,16 @@ pub unsafe extern "C" fn bloom_defrag(
     // While we are within a timeframe decided from should_stop_defrag and not over the number of filters defrag the next filter
     while !defrag.should_stop_defrag() && cursor < num_filters as u64 {
         // Remove the current filter, unbox it, and attempt to defragment.
-        let bloom_filter_box = bloom_filter_type.filters_mut().remove(cursor as usize);
-        let bloom_filter = Box::into_raw(bloom_filter_box);
-        let defrag_result = defrag.alloc(bloom_filter as *mut c_void);
+        let bloom_filter_owned = bloom_filter_type.filters_mut().remove(cursor as usize);
+        let bloom_filter_raw: *mut c_void =
+            &bloom_filter_owned as *const BloomFilter as *mut c_void;
+        let defrag_result = defrag.alloc(bloom_filter_raw);
         let mut defragged_filter = {
             if !defrag_result.is_null() {
                 Box::from_raw(defrag_result as *mut BloomFilter)
             } else {
-                Box::from_raw(bloom_filter)
+                let filter_ptr: *mut BloomFilter = bloom_filter_raw as *mut BloomFilter;
+                Box::from_raw(filter_ptr)
             }
         };
         // Swap the Bloom object with a temporary one for defragmentation
@@ -276,7 +278,7 @@ pub unsafe extern "C" fn bloom_defrag(
         // Reinsert the defragmented filter and increment the cursor
         bloom_filter_type
             .filters_mut()
-            .insert(cursor as usize, defragged_filter);
+            .insert(cursor as usize, *defragged_filter);
         cursor += 1;
     }
     // Save the cursor for where we will start defragmenting from next time
@@ -292,7 +294,7 @@ pub unsafe extern "C" fn bloom_defrag(
     if !defragged_filters_ptr.is_null() {
         *bloom_filter_type.filters_mut() = unsafe {
             Vec::from_raw_parts(
-                defragged_filters_ptr as *mut Box<BloomFilter>,
+                defragged_filters_ptr as *mut BloomFilter,
                 num_filters,
                 filters_capacity,
             )
@@ -300,7 +302,7 @@ pub unsafe extern "C" fn bloom_defrag(
     } else {
         *bloom_filter_type.filters_mut() = unsafe {
             Vec::from_raw_parts(
-                filters_ptr as *mut Box<BloomFilter>,
+                filters_ptr as *mut BloomFilter,
                 num_filters,
                 filters_capacity,
             )

@@ -115,7 +115,7 @@ impl ValkeyDataType for BloomFilterType {
                 logging::log_warning("Failed to restore bloom object: Object in fixed seed mode, but seed does not match FIXED_SEED.");
                 return None;
             }
-            filters.push(Box::new(filter));
+            filters.push(filter);
         }
         let item = BloomFilterType::from_existing(
             expansion as u32,

@@ -76,7 +76,7 @@ pub struct BloomFilterType {
     fp_rate: f64,
     tightening_ratio: f64,
     is_seed_random: bool,
-    filters: Vec<Box<BloomFilter>>,
+    filters: Vec<BloomFilter>,
 }
 
 impl BloomFilterType {
@@ -99,11 +99,11 @@ impl BloomFilterType {
         let bloom = match seed {
             (None, _) => {
                 is_seed_random = true;
-                Box::new(BloomFilter::with_random_seed(fp_rate, capacity))
+                BloomFilter::with_random_seed(fp_rate, capacity)
             }
             (Some(seed), is_random) => {
                 is_seed_random = is_random;
-                Box::new(BloomFilter::with_fixed_seed(fp_rate, capacity, &seed))
+                BloomFilter::with_fixed_seed(fp_rate, capacity, &seed)
             }
         };
         let filters = vec![bloom];
@@ -124,7 +124,7 @@ impl BloomFilterType {
         fp_rate: f64,
         tightening_ratio: f64,
         is_seed_random: bool,
-        filters: Vec<Box<BloomFilter>>,
+        filters: Vec<BloomFilter>,
     ) -> BloomFilterType {
         let bloom = BloomFilterType {
             expansion,
@@ -139,9 +139,9 @@ impl BloomFilterType {
 
     /// Create a new BloomFilterType object from an existing one (COPY).
     pub fn create_copy_from(from_bf: &BloomFilterType) -> BloomFilterType {
-        let mut filters: Vec<Box<BloomFilter>> = Vec::with_capacity(from_bf.filters.capacity());
+        let mut filters: Vec<BloomFilter> = Vec::with_capacity(from_bf.filters.capacity());
         for filter in &from_bf.filters {
-            let new_filter = Box::new(BloomFilter::create_copy_from(filter));
+            let new_filter = BloomFilter::create_copy_from(filter);
             filters.push(new_filter);
         }
         from_bf.bloom_filter_type_incr_metrics_on_new_create();
@@ -230,12 +230,12 @@ impl BloomFilterType {
     }
 
     /// Return a borrowed ref to the vector of filters in the bloom object.
-    pub fn filters(&self) -> &Vec<Box<BloomFilter>> {
+    pub fn filters(&self) -> &Vec<BloomFilter> {
         &self.filters
     }
 
     /// Return a mutatively borrowed ref to the vector of filters in the bloom object.
-    pub fn filters_mut(&mut self) -> &mut Vec<Box<BloomFilter>> {
+    pub fn filters_mut(&mut self) -> &mut Vec<BloomFilter> {
         &mut self.filters
     }
 
@@ -281,11 +281,7 @@ impl BloomFilterType {
                 return Err(BloomError::ExceedsMaxBloomSize);
             }
             let seed = self.seed();
-            let mut new_filter = Box::new(BloomFilter::with_fixed_seed(
-                new_fp_rate,
-                new_capacity,
-                &seed,
-            ));
+            let mut new_filter = BloomFilter::with_fixed_seed(new_fp_rate, new_capacity, &seed);
             let memory_usage_before: usize = self.bloom_filter_type_memory_usage();
             // Add item.
             new_filter.set(item);
@@ -361,8 +357,8 @@ impl BloomFilterType {
                     f64,
                     f64,
                     bool,
-                    Vec<Box<BloomFilter>>,
-                ) = match bincode::deserialize::<(u32, f64, f64, bool, Vec<Box<BloomFilter>>)>(
+                    Vec<BloomFilter>,
+                ) = match bincode::deserialize::<(u32, f64, f64, bool, Vec<BloomFilter>)>(
                     &decoded_bytes[1..],
                 ) {
                     Ok(values) => {
